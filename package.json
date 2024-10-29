@@ -1,0 +1,19 @@
+{
+  "name": "subscription-demo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next dev",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@stripe/stripe-js": "^2.2.0",
+    "@supabase/supabase-js": "^2.38.4",
+    "micro": "^10.0.1",
+    "next": "^14.0.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "stripe": "^14.5.0"
+  }
+}
