@@ -3,15 +3,6 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import { loadStripe } from '@stripe/stripe-js';
 
-// Log environment variables (except secrets)
-console.log('Environment Check:', {
-  hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-  hasSupabaseKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  hasStripeKey: !!process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-  hasStripePrice: !!process.env.NEXT_PUBLIC_STRIPE_PRICE_ID,
-  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
-});
-
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -23,23 +14,25 @@ export default function Home() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState(null);
-  const [debug, setDebug] = useState([]);
   const [formEmail, setFormEmail] = useState('');
   const [formPassword, setFormPassword] = useState('');
+  const [debug, setDebug] = useState([]);
 
   const addDebugMessage = (message, data = null) => {
     console.log(message, data);
-    setDebug(prev => [`${new Date().toISOString()} - ${message}`, ...prev]);
+    const debugMessage = data 
+      ? `${new Date().toISOString()} - ${message}: ${JSON.stringify(data)}`
+      : `${new Date().toISOString()} - ${message}`;
+    setDebug(prev => [debugMessage, ...prev]);
   };
 
   useEffect(() => {
-    addDebugMessage('Component mounted');
     checkUser();
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       addDebugMessage('Auth state changed', { event, hasSession: !!session });
       if (session?.user) {
         setUser(session.user);
-        checkSubscription(session.user);
+        await checkSubscription(session.user);
       } else {
         setUser(null);
         setSubscription(null);
@@ -51,34 +44,24 @@ export default function Home() {
     };
   }, []);
 
-  async function checkUser() {
-    addDebugMessage('Checking user');
-    const { data: { user }, error } = await supabase.auth.getUser();
-    if (error) addDebugMessage('Error checking user', error);
-    if (user) {
-      addDebugMessage('User found', { id: user.id, email: user.email });
-      setUser(user);
-      checkSubscription(user);
-    } else {
-      addDebugMessage('No user found');
-    }
-    setLoading(false);
-  }
-
   async function checkSubscription(user) {
     addDebugMessage('Checking subscription', { userId: user.id });
-    const { data: subscription, error } = await supabase
+    const { data, error } = await supabase
       .from('subscriptions')
       .select('*')
       .eq('user_id', user.id)
+      .eq('status', 'active')
       .single();
 
     if (error) {
       addDebugMessage('Error checking subscription', error);
-    } else {
-      addDebugMessage('Subscription status', subscription);
-      setSubscription(subscription);
+      setSubscription(null);
+      return false;
     }
+
+    addDebugMessage('Subscription data', data);
+    setSubscription(data);
+    return !!data;
   }
 
   async function handleSubscribe() {
@@ -94,17 +77,19 @@ export default function Home() {
           priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_ID,
         }),
       });
+      
       const data = await response.json();
-      addDebugMessage('Checkout session created', data);
-
+      
       if (data.error) {
         addDebugMessage('Error creating checkout session', data.error);
         alert(`Error: ${data.error}`);
         return;
       }
 
+      addDebugMessage('Checkout session created', { sessionId: data.sessionId });
       const stripe = await stripePromise;
       const { error } = await stripe.redirectToCheckout({ sessionId: data.sessionId });
+      
       if (error) {
         addDebugMessage('Stripe redirect error', error);
         alert(`Error: ${error.message}`);
@@ -115,38 +100,41 @@ export default function Home() {
     }
   }
 
-  async function handleSignIn(e) {
-    e.preventDefault();
-    addDebugMessage('Attempting sign in', { email: formEmail });
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: formEmail,
-      password: formPassword,
-    });
-    
-    if (error) {
-      addDebugMessage('Sign in error', error);
-      alert(`Sign in error: ${error.message}`);
-    } else {
-      addDebugMessage('Sign in successful', { user: data.user });
-    }
-  }
-
   async function handleSignUp(e) {
     e.preventDefault();
     addDebugMessage('Attempting sign up', { email: formEmail });
+    
     const { data, error } = await supabase.auth.signUp({
       email: formEmail,
       password: formPassword,
+      options: {
+        emailRedirectTo: 'https://third-saas.vercel.app/auth/callback'
+      }
     });
-    
+
     if (error) {
       addDebugMessage('Sign up error', error);
       alert(`Sign up error: ${error.message}`);
     } else {
-      addDebugMessage('Sign up successful', { user: data.user });
-      alert(data.user?.identities?.length === 0 
-        ? 'Account already exists. Please sign in instead.' 
-        : 'Check your email for verification link!');
+      addDebugMessage('Sign up successful', data);
+      alert('Please check your email for verification link!');
+    }
+  }
+
+  async function handleSignIn(e) {
+    e.preventDefault();
+    addDebugMessage('Attempting sign in', { email: formEmail });
+    
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: formEmail,
+      password: formPassword,
+    });
+
+    if (error) {
+      addDebugMessage('Sign in error', error);
+      alert(`Sign in error: ${error.message}`);
+    } else {
+      addDebugMessage('Sign in successful', data);
     }
   }
 
@@ -218,7 +206,7 @@ export default function Home() {
             Sign Out
           </button>
           
-          {!subscription?.status === 'active' ? (
+          {!subscription ? (
             <div>
               <p className="mb-4">Subscribe to access premium content!</p>
               <button
@@ -232,6 +220,7 @@ export default function Home() {
             <div>
               <h2 className="text-xl mb-4">Premium Content</h2>
               <p>Thank you for subscribing! Here's your premium content.</p>
+              <p>Subscription Status: {subscription.status}</p>
             </div>
           )}
         </div>
@@ -240,7 +229,11 @@ export default function Home() {
       <div className="mt-8 p-4 bg-gray-100 rounded">
         <h2 className="text-lg font-bold mb-2">Current State:</h2>
         <pre className="whitespace-pre-wrap text-sm">
-          {JSON.stringify({ user, subscription, loading }, null, 2)}
+          {JSON.stringify({
+            user: user,
+            subscription: subscription,
+            loading: loading,
+          }, null, 2)}
         </pre>
       </div>
     </div>
